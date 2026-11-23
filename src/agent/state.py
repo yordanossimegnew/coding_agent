@@ -1,10 +1,19 @@
-"""Conversation state and run results."""
+"""Graph state, token usage and run results."""
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any, TypedDict
+
+from langchain_core.messages import AIMessage, AnyMessage
+from langgraph.graph.message import add_messages
+
+
+class AgentState(TypedDict, total=False):
+    """State that flows through the LangGraph graph (checkpointed per session)."""
+
+    messages: Annotated[list[AnyMessage], add_messages]
+    steps: int  # model calls in the current run
 
 
 @dataclass
@@ -14,31 +23,19 @@ class Usage:
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
 
-    def add(self, usage: Any) -> None:
-        for name in vars(self):
-            setattr(self, name, getattr(self, name) + (getattr(usage, name, 0) or 0))
-
-
-@dataclass
-class AgentState:
-    """Everything needed to continue a conversation with the model."""
-
-    session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    messages: list[dict] = field(default_factory=list)
-    usage: Usage = field(default_factory=Usage)
-    steps: int = 0
-
-    def add_user_text(self, text: str) -> None:
-        self.messages.append({"role": "user", "content": text})
-
-    def add_assistant(self, content: list[Any]) -> None:
-        # Append the full content (thinking + text + tool_use blocks) unchanged;
-        # the API expects its own blocks back exactly as it sent them.
-        self.messages.append({"role": "assistant", "content": content})
-
-    def add_tool_results(self, results: list[dict]) -> None:
-        # All results for one assistant turn go back in a single user message.
-        self.messages.append({"role": "user", "content": results})
+    @classmethod
+    def from_messages(cls, messages: list[Any]) -> "Usage":
+        usage = cls()
+        for msg in messages:
+            meta = getattr(msg, "usage_metadata", None) if isinstance(msg, AIMessage) else None
+            if not meta:
+                continue
+            details = meta.get("input_token_details") or {}
+            usage.input_tokens += meta.get("input_tokens", 0)
+            usage.output_tokens += meta.get("output_tokens", 0)
+            usage.cache_read_input_tokens += details.get("cache_read", 0) or 0
+            usage.cache_creation_input_tokens += details.get("cache_creation", 0) or 0
+        return usage
 
 
 @dataclass
@@ -47,4 +44,4 @@ class AgentResult:
     final_text: str
     steps: int
     session_id: str
-    usage: Usage
+    usage: Usage = field(default_factory=Usage)

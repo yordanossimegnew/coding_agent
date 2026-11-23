@@ -1,3 +1,3 @@
-from .llm_client import LLMClient
+from .llm_client import build_chat_model
 
-__all__ = ["LLMClient"]
+__all__ = ["build_chat_model"]

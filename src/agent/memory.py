@@ -1,49 +1,76 @@
-"""Session memory: persist a conversation to JSON so it can be resumed later."""
+"""Session memory: a LangGraph SQLite checkpointer, one thread per session."""
 
 from __future__ import annotations
 
-import json
 import re
+import sqlite3
 from pathlib import Path
+from typing import Any
 
-from ..utils.helpers import serialize_messages
-from .state import AgentState, Usage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
-class SessionMemory:
-    def __init__(self, directory: Path):
-        self.directory = Path(directory)
-        self.directory.mkdir(parents=True, exist_ok=True)
+def validate_session_id(session_id: str) -> str:
+    if not _SAFE_ID.match(session_id):
+        raise ValueError(f"Invalid session id: {session_id!r}")
+    return session_id
 
-    def _path(self, session_id: str) -> Path:
-        if not _SAFE_ID.match(session_id):
-            raise ValueError(f"Invalid session id: {session_id!r}")
-        return self.directory / f"{session_id}.json"
 
-    def save(self, state: AgentState) -> Path:
-        path = self._path(state.session_id)
-        payload = {
-            "session_id": state.session_id,
-            "steps": state.steps,
-            "usage": vars(state.usage),
-            "messages": serialize_messages(state.messages),
-        }
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        return path
+def open_checkpointer(directory: Path) -> SqliteSaver:
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(directory / "sessions.sqlite", check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    return saver
 
-    def load(self, session_id: str) -> AgentState | None:
-        path = self._path(session_id)
-        if not path.exists():
-            return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return AgentState(
-            session_id=data["session_id"],
-            messages=data["messages"],
-            usage=Usage(**data.get("usage", {})),
-            steps=data.get("steps", 0),
-        )
 
-    def list_sessions(self) -> list[str]:
-        return sorted(p.stem for p in self.directory.glob("*.json"))
+def list_sessions(checkpointer: SqliteSaver) -> list[str]:
+    """Thread ids, most recently updated first."""
+    seen: list[str] = []
+    for checkpoint in checkpointer.list(None):
+        thread_id = checkpoint.config["configurable"]["thread_id"]
+        if thread_id not in seen:
+            seen.append(thread_id)
+    return seen
+
+
+def _text_blocks(content: Any) -> list[dict]:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    return [
+        {"type": "text", "text": block["text"]}
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+    ]
+
+
+def to_transcript(messages: list[Any]) -> list[dict]:
+    """Convert LangChain messages into simple role/content dicts for the API and UI.
+
+    Shape mirrors the Claude API: assistant turns hold text + tool_use blocks, and the
+    tool results that follow are grouped into one user turn of tool_result blocks.
+    """
+    out: list[dict] = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            out.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            blocks = _text_blocks(msg.content)
+            blocks += [
+                {"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["args"]}
+                for c in msg.tool_calls
+            ]
+            out.append({"role": "assistant", "content": blocks})
+        elif isinstance(msg, ToolMessage):
+            block = {"type": "tool_result", "tool_use_id": msg.tool_call_id, "content": str(msg.content)}
+            if msg.status == "error":
+                block["is_error"] = True
+            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+    return out

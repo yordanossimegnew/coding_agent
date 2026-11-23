@@ -15,7 +15,7 @@ import sys
 
 import anthropic
 
-from src.agent import AgentState, SessionMemory, build_agent
+from src.agent import build_agent
 from src.api import create_app
 from src.utils import load_settings, setup_logging
 
@@ -31,10 +31,10 @@ def print_event(kind: str, payload) -> None:
     if kind == "text":
         print(f"\n{payload}")
     elif kind == "tool_call":
-        args = json.dumps(payload.input, ensure_ascii=False)
-        print(f"{CYAN}> {payload.name}{RESET} {DIM}{args[:160]}{RESET}")
-    elif kind == "tool_result" and payload.get("is_error"):
-        print(f"{RED}  ! {str(payload['content'])[:200]}{RESET}")
+        args = json.dumps(payload["args"], ensure_ascii=False)
+        print(f"{CYAN}> {payload['name']}{RESET} {DIM}{args[:160]}{RESET}")
+    elif kind == "tool_result" and payload.status == "error":
+        print(f"{RED}  ! {str(payload.content)[:200]}{RESET}")
 
 
 def ask_approval(name: str, tool_input: dict) -> bool:
@@ -45,20 +45,21 @@ def ask_approval(name: str, tool_input: dict) -> bool:
         return False
 
 
-def run_task(agent, task: str, state: AgentState | None) -> AgentState:
+def run_task(agent, task: str, session_id: str | None) -> str | None:
+    """Run one task; returns the session id to continue with."""
     try:
-        result = agent.run(task, state=state)
+        result = agent.run(task, session_id=session_id)
     except anthropic.AuthenticationError:
         sys.exit(f"{RED}Authentication failed. Set ANTHROPIC_API_KEY in .env (see .env.example).{RESET}")
     except anthropic.APIError as exc:
         print(f"{RED}API error: {exc}{RESET}")
-        return state or AgentState()
+        return session_id
     u = result.usage
     print(
         f"\n{DIM}[{result.status}] steps={result.steps} session={result.session_id} "
         f"tokens in={u.input_tokens} out={u.output_tokens} cached={u.cache_read_input_tokens}{RESET}"
     )
-    return agent.memory.load(result.session_id)
+    return result.session_id
 
 
 def cli(args: argparse.Namespace) -> None:
@@ -67,14 +68,12 @@ def cli(args: argparse.Namespace) -> None:
     agent = build_agent(cfg, approve=approve, on_event=print_event)
     print(f"{DIM}workspace: {cfg.workspace}  model: {cfg.model}{RESET}")
 
-    state = None
-    if args.session:
-        state = SessionMemory(cfg.sessions_dir).load(args.session)
-        if state is None:
-            sys.exit(f"No saved session '{args.session}'.")
+    session_id = args.session
+    if session_id and not agent.session_exists(session_id):
+        sys.exit(f"No saved session '{session_id}'.")
 
     if args.task:
-        run_task(agent, args.task, state)
+        run_task(agent, args.task, session_id)
         return
 
     print("Interactive mode. Type a task, or 'exit' to quit.")
@@ -86,7 +85,7 @@ def cli(args: argparse.Namespace) -> None:
         if task.lower() in {"exit", "quit"}:
             break
         if task:
-            state = run_task(agent, task, state)
+            session_id = run_task(agent, task, session_id)
 
 
 def main() -> None:

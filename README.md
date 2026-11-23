@@ -1,15 +1,16 @@
 # 01 · Coding Agent
 
-A small, readable coding agent served as a **FastAPI** application. Give it a task like
+A readable coding agent built with **LangGraph** and **LangChain**, served as a **FastAPI**
+application with a **Streamlit** UI. Give it a task like
 *"add fizzbuzz.py with tests and run them"* and it reads, writes, searches and runs code
 inside a sandboxed workspace folder until the task is done.
 
-The goal is to show the core of every coding agent (Claude Code, Cursor, Aider…) in a
-few hundred lines: **model → tool calls → results → model → … → done**.
+The goal is to show the core of every coding agent (Claude Code, Cursor, Aider…) as a small
+LangGraph state machine: **model → tool calls → results → model → … → done**.
 
 ![Demo](docs/demo.gif)
 
-<sub>Demo recorded against a scripted model so it is reproducible without an API key. The UI, API, tools and workspace are the real ones, and the `pytest` run was executed for real.</sub>
+<sub>Demo uses scripted model replies; the UI, API, tools and test run are real.</sub>
 
 | Run a task | Agent trace | Workspace |
 |---|---|---|
@@ -17,7 +18,8 @@ few hundred lines: **model → tool calls → results → model → … → done
 
 ## Features
 
-- **Hand-written agent loop** using the Claude API (`claude-opus-5-5`, adaptive thinking).
+- **LangGraph orchestration:** an `agent` → `tools` → `agent` state graph with conditional routing.
+- **LangChain `ChatAnthropic`** for Claude (`claude-opus-5-5`, adaptive thinking).
 - **6 tools:** `list_files`, `read_file`, `write_file`, `edit_file` (exact-match replace),
   `search_code` (regex), `run_command` (shell).
 - **Sandboxed workspace:** every path is resolved inside `workspace/`, so `../` escapes are rejected.
@@ -25,7 +27,8 @@ few hundred lines: **model → tool calls → results → model → … → done
 - **Strict tool schemas** (`strict: true`) so tool inputs always match the schema.
 - **Prompt caching** of the growing conversation, which cuts cost on long loops.
 - **Refusal fallback:** if the model declines a request, the API retries it on a fallback model.
-- **Session memory:** conversations are saved as JSON and can be resumed by `session_id`.
+- **Session memory:** a LangGraph SQLite checkpointer saves every step, so any session can be
+  resumed by `session_id`.
 - **Robust stop handling:** `tool_use`, `end_turn`, `max_tokens` (truncated tool calls are
   reported back rather than run), `pause_turn`, `refusal`, and a step limit.
 - **Streamlit UI:** run tasks, step through the agent's trace (every tool call and result),
@@ -48,24 +51,24 @@ few hundred lines: **model → tool calls → results → model → … → done
 ├── docs/                   # demo.gif + screenshots for this README
 ├── src/
 │   ├── agent/
-│   │   ├── agent.py        # the agent loop
-│   │   ├── executor.py     # runs tool calls -> tool_result blocks, approval gate
-│   │   ├── state.py        # conversation state, token usage, results
-│   │   └── memory.py       # save / resume sessions as JSON
+│   │   ├── agent.py        # LangGraph StateGraph: agent + tools nodes, routing
+│   │   ├── executor.py     # runs tool calls -> ToolMessages, approval gate
+│   │   ├── state.py        # graph state (messages, steps), token usage, results
+│   │   └── memory.py       # SQLite checkpointer, session list, transcript export
 │   ├── tools/
 │   │   ├── base.py         # Tool, ToolError, sandboxed Workspace
 │   │   ├── filesystem.py   # list / read / write / edit
 │   │   ├── search.py       # regex code search
 │   │   └── shell.py        # run_command (needs approval)
 │   ├── models/
-│   │   └── llm_client.py   # Anthropic SDK wrapper (model, effort, caching, fallback)
+│   │   └── llm_client.py   # LangChain ChatAnthropic (model, effort, caching, fallback)
 │   ├── prompts/
 │   │   ├── system_prompts.py
 │   │   └── agent_prompts.py  # system prompt + knowledge base assembly
 │   ├── utils/
 │   │   ├── config.py       # settings from env / .env
 │   │   ├── logger.py       # console + rotating file logs
-│   │   └── helpers.py      # truncation, serialization
+│   │   └── helpers.py      # output truncation
 │   └── api/
 │       ├── routes.py       # FastAPI endpoints
 │       └── schemas.py      # Pydantic request/response models
@@ -173,15 +176,29 @@ All settings come from environment variables; see `.env.example`.
 | `AGENT_COMMAND_TIMEOUT` | `60`              | Seconds before a shell command is killed    |
 | `AGENT_AUTO_APPROVE`    | `false`           | Run shell commands without asking           |
 
-## How the loop works
+## How the graph works
 
-1. Send the system prompt, the conversation and the tool definitions to Claude.
-2. Append Claude's full reply (thinking, text and tool calls) to the conversation unchanged.
-3. If `stop_reason == "tool_use"`, run every requested tool and send **all** results back in one
-   user message. Failures go back as `is_error: true` so the model can recover.
-4. Repeat until `end_turn`, a refusal, or the step limit.
+```mermaid
+graph LR
+    START((start)) --> agent
+    agent -- tool calls --> tools
+    agent -- pause_turn --> agent
+    agent -- done / refusal --> END((end))
+    tools -- steps left --> agent
+    tools -- step limit --> END
+```
 
-See [`src/agent/agent.py`](src/agent/agent.py). The loop is about 60 lines.
+1. **`agent` node:** sends the system prompt and conversation to Claude via `ChatAnthropic`
+   (tools bound with `bind_tools`) and appends the reply, including thinking and tool calls.
+2. **Routing:** if the reply has tool calls, go to `tools`; if the server paused a long turn,
+   call `agent` again; otherwise finish.
+3. **`tools` node:** runs every requested tool and appends one `ToolMessage` per call. Failures
+   come back as error results so the model can recover. A response cut off by `max_tokens`
+   isn't run; the model is told to retry in smaller steps.
+4. **Checkpointing:** the SQLite checkpointer saves the state after every node, keyed by
+   `session_id` (the LangGraph `thread_id`).
+
+See [`src/agent/agent.py`](src/agent/agent.py).
 
 ## Ideas to extend
 

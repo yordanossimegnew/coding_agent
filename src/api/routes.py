@@ -1,4 +1,4 @@
-"""FastAPI app exposing the agent over HTTP.
+"""FastAPI app exposing the LangGraph agent over HTTP.
 
 There is no human at the keyboard here, so run_command is only allowed when
 AGENT_AUTO_APPROVE=true. Leave it off unless the workspace is disposable.
@@ -11,19 +11,28 @@ from typing import Any, Callable
 import anthropic
 from fastapi import FastAPI, HTTPException
 
-from ..agent import SessionMemory, build_agent
+from ..agent import build_agent, list_sessions, open_checkpointer, to_transcript, validate_session_id
+from ..agent.state import Usage
 from ..tools import ToolError, Workspace
 from ..tools.filesystem import IGNORED_DIRS
 from ..utils.config import Settings, load_settings
-from ..utils.helpers import serialize_messages
 from .schemas import HealthResponse, RunRequest, RunResponse, UsageOut
 
 
 def create_app(settings: Settings | None = None, llm_factory: Callable[[], Any] | None = None) -> FastAPI:
     settings = settings or load_settings()
     app = FastAPI(title="Coding Agent", version="1.0.0")
-    memory = SessionMemory(settings.sessions_dir)
+    checkpointer = open_checkpointer(settings.sessions_dir)
     workspace = Workspace(settings.workspace)
+
+    def agent():
+        return build_agent(settings, llm=llm_factory() if llm_factory else None, checkpointer=checkpointer)
+
+    def check_session(session_id: str) -> None:
+        try:
+            validate_session_id(session_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -31,18 +40,21 @@ def create_app(settings: Settings | None = None, llm_factory: Callable[[], Any] 
 
     @app.get("/sessions")
     def sessions() -> dict[str, list[str]]:
-        return {"sessions": memory.list_sessions()}
+        return {"sessions": list_sessions(checkpointer)}
 
     @app.get("/sessions/{session_id}")
     def session_detail(session_id: str) -> dict:
-        try:
-            state = memory.load(session_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if state is None:
+        check_session(session_id)
+        messages = agent().messages(session_id)
+        if not messages:
             raise HTTPException(status_code=404, detail="Session not found")
-        return {"session_id": state.session_id, "steps": state.steps,
-                "usage": vars(state.usage), "messages": serialize_messages(state.messages)}
+        steps = sum(1 for m in to_transcript(messages) if m["role"] == "assistant")
+        return {
+            "session_id": session_id,
+            "steps": steps,
+            "usage": vars(Usage.from_messages(messages)),
+            "messages": to_transcript(messages),
+        }
 
     @app.get("/workspace/files")
     def workspace_files() -> dict[str, list[str]]:
@@ -67,18 +79,13 @@ def create_app(settings: Settings | None = None, llm_factory: Callable[[], Any] 
 
     @app.post("/run", response_model=RunResponse)
     def run(request: RunRequest) -> RunResponse:
-        state = None
+        runner = agent()
         if request.session_id:
-            try:
-                state = memory.load(request.session_id)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            if state is None:
+            check_session(request.session_id)
+            if not runner.session_exists(request.session_id):
                 raise HTTPException(status_code=404, detail="Session not found")
-
-        agent = build_agent(settings, llm=llm_factory() if llm_factory else None)
         try:
-            result = agent.run(request.task, state=state)
+            result = runner.run(request.task, session_id=request.session_id)
         except anthropic.RateLimitError as exc:
             raise HTTPException(status_code=429, detail="Rate limited by the model API; retry later.") from exc
         except anthropic.APIStatusError as exc:

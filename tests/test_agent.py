@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from src.agent import AgentState, SessionMemory, build_agent
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from src.agent import build_agent, list_sessions, open_checkpointer, to_transcript
 from tests.fakes import FakeLLM, response, text, tool_use
 
 
-def test_agent_runs_tools_until_done(settings):
+def test_graph_runs_tools_until_done(settings):
     llm = FakeLLM([
         response(
             text("Creating the file."),
@@ -13,20 +15,18 @@ def test_agent_runs_tools_until_done(settings):
         ),
         response(text("Done: created hello.py.")),
     ])
-    agent = build_agent(settings, llm=llm)
-    result = agent.run("create hello.py")
+    result = build_agent(settings, llm=llm).run("create hello.py")
 
     assert result.status == "completed"
     assert result.final_text == "Done: created hello.py."
     assert result.steps == 2
+    assert result.usage.input_tokens == 20
     assert (settings.workspace / "hello.py").read_text() == "print('hi')\n"
 
-    # Second call carries: user task, assistant tool_use, user tool_result
-    second = llm.calls[1]["messages"]
-    assert [m["role"] for m in second] == ["user", "assistant", "user"]
-    assert second[2]["content"][0] == {
-        "type": "tool_result", "tool_use_id": "t1", "content": "Created hello.py (1 lines)."
-    }
+    # Second model call sees: system, task, assistant tool call, tool result
+    second = llm.calls[1]
+    assert [type(m) for m in second] == [SystemMessage, HumanMessage, AIMessage, ToolMessage]
+    assert second[-1].content == "Created hello.py (1 lines)." and second[-1].tool_call_id == "t1"
 
 
 def test_tool_errors_go_back_to_model(settings):
@@ -35,9 +35,8 @@ def test_tool_errors_go_back_to_model(settings):
         response(text("That file does not exist.")),
     ])
     build_agent(settings, llm=llm).run("read missing.py")
-    result_block = llm.calls[1]["messages"][-1]["content"][0]
-    assert result_block["is_error"] is True
-    assert "File not found" in result_block["content"]
+    result = llm.calls[1][-1]
+    assert result.status == "error" and "File not found" in result.content
 
 
 def test_shell_commands_need_approval(settings):
@@ -46,10 +45,10 @@ def test_shell_commands_need_approval(settings):
         response(text("ok")),
     ])
     seen = []
-    agent = build_agent(settings, llm=llm, approve=lambda name, inp: seen.append(inp) or False)
+    agent = build_agent(settings, llm=llm, approve=lambda name, args: seen.append(args) or False)
     agent.run("say hi")
     assert seen == [{"command": "echo hi"}]
-    assert "declined" in llm.calls[1]["messages"][-1]["content"][0]["content"]
+    assert "declined" in llm.calls[1][-1].content
 
 
 def test_truncated_tool_call_is_answered_not_run(settings):
@@ -60,7 +59,7 @@ def test_truncated_tool_call_is_answered_not_run(settings):
     result = build_agent(settings, llm=llm).run("write a big file")
     assert result.status == "completed"
     assert not (settings.workspace / "big.py").exists()
-    assert llm.calls[1]["messages"][-1]["content"][0]["is_error"] is True
+    assert llm.calls[1][-1].status == "error"
 
 
 def test_step_limit(settings):
@@ -75,13 +74,30 @@ def test_refusal_is_reported(settings):
     assert result.status == "refusal"
 
 
-def test_session_is_saved_and_resumable(settings):
-    agent = build_agent(settings, llm=FakeLLM([response(text("first"))]))
-    first = agent.run("hello")
-    loaded = SessionMemory(settings.sessions_dir).load(first.session_id)
-    assert isinstance(loaded, AgentState)
-    assert loaded.messages[1]["content"] == [{"type": "text", "text": "first"}]
+def test_sessions_are_checkpointed_and_resumable(settings):
+    checkpointer = open_checkpointer(settings.sessions_dir)
+    first = build_agent(settings, llm=FakeLLM([response(text("first"))]), checkpointer=checkpointer).run("hello")
+    assert first.session_id in list_sessions(checkpointer)
 
     llm = FakeLLM([response(text("second"))])
-    build_agent(settings, llm=llm).run("again", state=loaded)
-    assert [m["role"] for m in llm.calls[0]["messages"]] == ["user", "assistant", "user"]
+    agent = build_agent(settings, llm=llm, checkpointer=checkpointer)
+    assert agent.session_exists(first.session_id)
+    second = agent.run("again", session_id=first.session_id)
+
+    assert second.session_id == first.session_id
+    assert [type(m) for m in llm.calls[0]] == [SystemMessage, HumanMessage, AIMessage, HumanMessage]
+    assert second.steps == 1  # steps count per run
+
+
+def test_transcript_groups_tool_results():
+    messages = [
+        HumanMessage("task"),
+        AIMessage(content=[{"type": "text", "text": "hi"}],
+                  tool_calls=[{"id": "a", "name": "x", "args": {}}, {"id": "b", "name": "y", "args": {}}]),
+        ToolMessage(content="ok", tool_call_id="a"),
+        ToolMessage(content="bad", tool_call_id="b", status="error"),
+    ]
+    out = to_transcript(messages)
+    assert [m["role"] for m in out] == ["user", "assistant", "user"]
+    assert out[1]["content"][1] == {"type": "tool_use", "id": "a", "name": "x", "input": {}}
+    assert out[2]["content"][1]["is_error"] is True

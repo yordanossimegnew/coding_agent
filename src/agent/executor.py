@@ -1,8 +1,10 @@
-"""Runs tool calls requested by the model and turns them into tool_result blocks."""
+"""Runs tool calls requested by the model and turns them into ToolMessages."""
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
+
+from langchain_core.messages import ToolMessage
 
 from ..tools.base import Tool, ToolError, Workspace
 from ..utils.helpers import truncate
@@ -31,30 +33,30 @@ class ToolExecutor:
     def definitions(self) -> list[dict]:
         return [tool.to_api() for tool in self.tools.values()]
 
-    def execute(self, tool_use: Any) -> dict:
-        """Run one tool_use block. Never raises: failures become is_error results."""
-        name, tool_input = tool_use.name, tool_use.input
-        result = {"type": "tool_result", "tool_use_id": tool_use.id}
+    def execute(self, call: dict) -> ToolMessage:
+        """Run one tool call ({"name", "args", "id"}). Never raises: failures become error results."""
+        name, args, call_id = call["name"], call.get("args"), call["id"]
+
+        def error(text: str) -> ToolMessage:
+            return ToolMessage(content=text, tool_call_id=call_id, name=name, status="error")
+
         tool = self.tools.get(name)
         if tool is None:
-            return {**result, "content": f"Unknown tool: {name}", "is_error": True}
-        if not isinstance(tool_input, dict):
-            return {**result, "content": "Tool input must be a JSON object.", "is_error": True}
-        if tool.requires_approval and not self.approve(name, tool_input):
-            log.info("User declined %s %s", name, tool_input)
-            return {**result, "content": "The user declined to run this.", "is_error": True}
+            return error(f"Unknown tool: {name}")
+        if not isinstance(args, dict):
+            return error("Tool input must be a JSON object.")
+        if tool.requires_approval and not self.approve(name, args):
+            log.info("User declined %s %s", name, args)
+            return error("The user declined to run this.")
         try:
-            output = tool.handler(self.workspace, **tool_input)
+            output = tool.handler(self.workspace, **args)
             log.info("%s ok", name)
-            return {**result, "content": truncate(output)}
+            return ToolMessage(content=truncate(output), tool_call_id=call_id, name=name)
         except ToolError as exc:
             log.info("%s tool error: %s", name, exc)
-            return {**result, "content": str(exc), "is_error": True}
+            return error(str(exc))
         except TypeError as exc:  # wrong / missing arguments
-            return {**result, "content": f"Invalid arguments: {exc}", "is_error": True}
+            return error(f"Invalid arguments: {exc}")
         except Exception as exc:  # unexpected failure: report it, keep the agent alive
             log.exception("%s crashed", name)
-            return {**result, "content": f"{type(exc).__name__}: {exc}", "is_error": True}
-
-    def execute_all(self, tool_uses: list[Any]) -> list[dict]:
-        return [self.execute(tool_use) for tool_use in tool_uses]
+            return error(f"{type(exc).__name__}: {exc}")
