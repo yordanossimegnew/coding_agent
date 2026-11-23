@@ -13,7 +13,7 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> None:
     global _CONFIGURED
     if _CONFIGURED:
         return
-    root = logging.getLogger("tiny_agent")
+    root = logging.getLogger("coding_agent")
     root.setLevel(level.upper())
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
@@ -33,4 +33,4 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> None:
 
 
 def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(f"tiny_agent.{name}")
+    return logging.getLogger(f"coding_agent.{name}")

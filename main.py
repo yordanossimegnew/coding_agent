@@ -90,7 +90,7 @@ def cli(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Tiny Coding Agent")
+    parser = argparse.ArgumentParser(description="Coding Agent")
     sub = parser.add_subparsers(dest="command")
 
     serve = sub.add_parser("serve", help="Run the FastAPI server (default).")

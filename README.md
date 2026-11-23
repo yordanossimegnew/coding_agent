@@ -1,4 +1,4 @@
-# 01 · Tiny Coding Agent
+# 01 · Coding Agent
 
 A small, readable coding agent served as a **FastAPI** application. Give it a task like
 *"add fizzbuzz.py with tests and run them"* and it reads, writes, searches and runs code
@@ -35,7 +35,7 @@ few hundred lines: **model → tool calls → results → model → … → done
 ## Project structure
 
 ```
-01-tiny-coding-agent/
+01-coding-agent/
 ├── README.md
 ├── requirements.txt
 ├── .env.example            # copy to .env (never commit .env)
@@ -80,7 +80,7 @@ few hundred lines: **model → tool calls → results → model → … → done
 ## Setup
 
 ```bash
-cd 01-tiny-coding-agent
+cd 01-coding-agent
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt

@@ -1,4 +1,4 @@
-"""Streamlit front end for the Tiny Coding Agent. Talks to the FastAPI backend over HTTP.
+"""Streamlit front end for the Coding Agent. Talks to the FastAPI backend over HTTP.
 
     uvicorn main:app            # terminal 1
     streamlit run ui/app.py     # terminal 2
@@ -16,7 +16,7 @@ import streamlit as st
 API_URL = os.getenv("AGENT_API_URL", "http://localhost:8000")
 EXAMPLES = json.loads((Path(__file__).resolve().parents[1] / "data" / "examples.json").read_text())
 
-st.set_page_config(page_title="Tiny Coding Agent", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="Coding Agent", page_icon="🛠️", layout="wide")
 
 
 # ----------------------------------------------------------------------------- API helpers
@@ -52,7 +52,7 @@ def format_call(name: str, args: dict) -> str:
 
 # ----------------------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.title("🛠️ Tiny Coding Agent")
+    st.title("🛠️ Coding Agent")
     st.caption("A minimal agent loop on the Claude API")
     health = api_get("/health")
     if health:

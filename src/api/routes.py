@@ -21,7 +21,7 @@ from .schemas import HealthResponse, RunRequest, RunResponse, UsageOut
 
 def create_app(settings: Settings | None = None, llm_factory: Callable[[], Any] | None = None) -> FastAPI:
     settings = settings or load_settings()
-    app = FastAPI(title="Tiny Coding Agent", version="1.0.0")
+    app = FastAPI(title="Coding Agent", version="1.0.0")
     memory = SessionMemory(settings.sessions_dir)
     workspace = Workspace(settings.workspace)
 
