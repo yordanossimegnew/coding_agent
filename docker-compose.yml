@@ -1,0 +1,25 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      AGENT_WORKSPACE: /app/workspace
+      # Inside the container the agent can only touch the mounted workspace,
+      # so allowing shell commands is reasonably contained here.
+      AGENT_AUTO_APPROVE: "true"
+    volumes:
+      - ./workspace:/app/workspace
+      - ./data/sessions:/app/data/sessions
+      - ./logs:/app/logs
+
+  ui:
+    build: .
+    command: streamlit run ui/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    ports:
+      - "8501:8501"
+    environment:
+      AGENT_API_URL: http://api:8000
+    depends_on:
+      - api

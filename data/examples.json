@@ -1,0 +1,18 @@
+[
+  {
+    "name": "fizzbuzz",
+    "task": "Create fizzbuzz.py with a fizzbuzz(n) function that returns a list of strings, plus test_fizzbuzz.py using pytest. Run the tests."
+  },
+  {
+    "name": "fix-bug",
+    "task": "There is a bug in the code under src/. Find it by running the tests, fix it, and confirm the tests pass."
+  },
+  {
+    "name": "add-cli",
+    "task": "Add a small argparse CLI in cli.py that wraps the existing functions in this project, and document it in README.md."
+  },
+  {
+    "name": "explain",
+    "task": "Read the project and explain its structure in five bullet points. Do not change any files."
+  }
+]
