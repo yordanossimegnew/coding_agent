@@ -1,4 +1,4 @@
-# 01 · Coding Agent
+# Coding Agent
 
 A readable coding agent built with **LangGraph** and **LangChain**, served as a **FastAPI**
 application with a **Streamlit** UI. Give it a task like
@@ -38,7 +38,7 @@ LangGraph state machine: **model → tool calls → results → model → … �
 ## Project structure
 
 ```
-01-coding-agent/
+coding-agent/
 ├── README.md
 ├── requirements.txt
 ├── .env.example            # copy to .env (never commit .env)
@@ -83,7 +83,7 @@ LangGraph state machine: **model → tool calls → results → model → … �
 ## Setup
 
 ```bash
-cd 01-coding-agent
+cd coding-agent
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
