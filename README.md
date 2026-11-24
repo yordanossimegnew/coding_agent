@@ -1,5 +1,7 @@
 # Coding Agent
 
+[![tests](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml)
+
 A readable coding agent built with **LangGraph** and **LangChain**, served as a **FastAPI**
 application with a **Streamlit** UI. Give it a task like
 *"add fizzbuzz.py with tests and run them"* and it reads, writes, searches and runs code
