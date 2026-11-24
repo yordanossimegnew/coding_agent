@@ -29,7 +29,7 @@ class Settings:
     auto_approve: bool = False
     log_level: str = "INFO"
     log_dir: Path = PROJECT_ROOT / "logs"
-    sessions_dir: Path = PROJECT_ROOT / "data" / "sessions"
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/coding_agent"
     knowledge_base_dir: Path = PROJECT_ROOT / "data" / "knowledge_base"
 
 
@@ -45,6 +45,7 @@ def load_settings(**overrides) -> Settings:
         command_timeout=int(os.getenv("AGENT_COMMAND_TIMEOUT", Settings.command_timeout)),
         auto_approve=_env_bool("AGENT_AUTO_APPROVE", Settings.auto_approve),
         log_level=os.getenv("LOG_LEVEL", Settings.log_level),
+        database_url=os.getenv("DATABASE_URL", Settings.database_url),
     )
     clean = {k: v for k, v in overrides.items() if v is not None}
     if "workspace" in clean:

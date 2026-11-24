@@ -1,6 +1,6 @@
 # Coding Agent
 
-[![tests](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml)
+[![tests](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yordanossimegnew/coding_agent/actions/workflows/tests.yml) ![Python 3.12](https://img.shields.io/badge/python-3.12-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A readable coding agent built with **LangGraph** and **LangChain**, served as a **FastAPI**
 application with a **Streamlit** UI. Give it a task like
@@ -18,6 +18,13 @@ LangGraph state machine: **model → tool calls → results → model → … �
 |---|---|---|
 | ![Run result](docs/screenshots/run-result.png) | ![Agent trace](docs/screenshots/agent-trace.png) | ![Workspace](docs/screenshots/workspace.png) |
 
+## Engineering highlights
+
+- The whole agent loop is a two-node LangGraph state machine you can read in one file: model → tools → model, with routing for `pause_turn`, refusals and step limits.
+- Tool failures and `max_tokens` cut-offs go back to the model as error results instead of crashing the run, so it recovers on its own.
+- Every path is resolved inside a sandbox folder (`../` escapes are rejected), and shell commands need human approval in the CLI.
+- Each step is checkpointed to PostgreSQL, so any session can be listed, resumed or exported.
+
 ## Features
 
 - **LangGraph orchestration:** an `agent` → `tools` → `agent` state graph with conditional routing.
@@ -29,7 +36,7 @@ LangGraph state machine: **model → tool calls → results → model → … �
 - **Strict tool schemas** (`strict: true`) so tool inputs always match the schema.
 - **Prompt caching** of the growing conversation, which cuts cost on long loops.
 - **Refusal fallback:** if the model declines a request, the API retries it on a fallback model.
-- **Session memory:** a LangGraph SQLite checkpointer saves every step, so any session can be
+- **Session memory:** a LangGraph PostgreSQL checkpointer saves every step, so any session can be
   resumed by `session_id`.
 - **Robust stop handling:** `tool_use`, `end_turn`, `max_tokens` (truncated tool calls are
   reported back rather than run), `pause_turn`, `refusal`, and a step limit.
@@ -56,7 +63,7 @@ coding-agent/
 │   │   ├── agent.py        # LangGraph StateGraph: agent + tools nodes, routing
 │   │   ├── executor.py     # runs tool calls -> ToolMessages, approval gate
 │   │   ├── state.py        # graph state (messages, steps), token usage, results
-│   │   └── memory.py       # SQLite checkpointer, session list, transcript export
+│   │   └── memory.py       # PostgreSQL checkpointer, session list, transcript export
 │   ├── tools/
 │   │   ├── base.py         # Tool, ToolError, sandboxed Workspace
 │   │   ├── filesystem.py   # list / read / write / edit
@@ -89,7 +96,15 @@ cd coding-agent
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env              # then put your ANTHROPIC_API_KEY in .env
+cp .env.example .env              # set ANTHROPIC_API_KEY, DATABASE_URL and TEST_DATABASE_URL
+```
+
+Create the two PostgreSQL databases once (in psql or pgAdmin). LangGraph creates its checkpoint
+tables on first start:
+
+```sql
+CREATE DATABASE coding_agent;
+CREATE DATABASE coding_agent_test;   -- used only by pytest
 ```
 
 ## Run the API
@@ -197,7 +212,7 @@ graph LR
 3. **`tools` node:** runs every requested tool and appends one `ToolMessage` per call. Failures
    come back as error results so the model can recover. A response cut off by `max_tokens`
    isn't run; the model is told to retry in smaller steps.
-4. **Checkpointing:** the SQLite checkpointer saves the state after every node, keyed by
+4. **Checkpointing:** the PostgreSQL checkpointer saves the state after every node, keyed by
    `session_id` (the LangGraph `thread_id`).
 
 See [`src/agent/agent.py`](src/agent/agent.py).

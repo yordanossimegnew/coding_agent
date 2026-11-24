@@ -75,7 +75,7 @@ def test_refusal_is_reported(settings):
 
 
 def test_sessions_are_checkpointed_and_resumable(settings):
-    checkpointer = open_checkpointer(settings.sessions_dir)
+    checkpointer = open_checkpointer(settings.database_url)
     first = build_agent(settings, llm=FakeLLM([response(text("first"))]), checkpointer=checkpointer).run("hello")
     assert first.session_id in list_sessions(checkpointer)
 

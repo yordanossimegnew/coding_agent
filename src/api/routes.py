@@ -22,7 +22,7 @@ from .schemas import HealthResponse, RunRequest, RunResponse, UsageOut
 def create_app(settings: Settings | None = None, llm_factory: Callable[[], Any] | None = None) -> FastAPI:
     settings = settings or load_settings()
     app = FastAPI(title="Coding Agent", version="1.0.0")
-    checkpointer = open_checkpointer(settings.sessions_dir)
+    checkpointer = open_checkpointer(settings.database_url)
     workspace = Workspace(settings.workspace)
 
     def agent():

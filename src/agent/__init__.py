@@ -29,7 +29,7 @@ def build_agent(
         llm=llm or build_chat_model(settings, executor.definitions()),
         executor=executor,
         system_prompt=build_system_prompt(settings.knowledge_base_dir),
-        checkpointer=checkpointer or open_checkpointer(settings.sessions_dir),
+        checkpointer=checkpointer or open_checkpointer(settings.database_url),
         max_steps=settings.max_steps,
         on_event=on_event,
     )
